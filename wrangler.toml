@@ -1,0 +1,16 @@
+name = "telegram-bot-notion"
+main = "index.js"
+compatibility_date = "2023-12-01"
+
+# KV 存储配置 - 用于缓存文件路径
+[[kv_namespaces]]
+binding = "FILE_CACHE"
+id = "8d69d7bde74347e6a78b6f79b1eb18af"
+preview_id = "8d69d7bde74347e6a78b6f79b1eb18af"
+
+# 环境变量配置
+[vars]
+# 这些变量也可以通过 Cloudflare Dashboard 设置
+# NOTION_TOKEN = "your-notion-token"
+# NOTION_DATABASE_ID = "your-notion-database-id"  
+# TELEGRAM_BOT_TOKEN = "your-telegram-bot-token"
