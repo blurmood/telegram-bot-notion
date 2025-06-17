@@ -604,8 +604,10 @@ var fixed_default = {
             // 检查是否是图片文档（转发的图片通常会变成document类型）
             if (mimeType && mimeType.startsWith('image/')) {
               console.log(`\u68C0\u6D4B\u5230\u56FE\u7247\u6587\u6863: ${fileName}, MIME\u7C7B\u578B: ${mimeType}`);
-              messageContent = `\u56FE\u7247: ${fileName}`;
+              // 优先使用消息的文本内容，如果没有才使用文件名
+              messageContent = channelPost.caption || channelPost.text || `\u56FE\u7247: ${fileName}`;
               messageType = "\u56FE\u7247";
+              console.log(`\u56FE\u7247\u6587\u6863\u6D88\u606F\u5185\u5BB9: ${messageContent}`);
               try {
                 const fileUrl = await getSmartFileUrl(url.origin, channelPost.document.file_id, telegramBotToken, 'image');
                 imageUrls.push(fileUrl);
@@ -616,8 +618,10 @@ var fixed_default = {
             } else {
               // 真正的文档文件
               console.log(`\u68C0\u6D4B\u5230\u6587\u6863\u6587\u4EF6: ${fileName}, MIME\u7C7B\u578B: ${mimeType}`);
-              messageContent = fileName;
+              // 优先使用消息的文本内容，如果没有才使用文件名
+              messageContent = channelPost.caption || channelPost.text || fileName;
               messageType = "\u6587\u4EF6";
+              console.log(`\u6587\u6863\u6587\u4EF6\u6D88\u606F\u5185\u5BB9: ${messageContent}`);
               try {
                 const fileUrl = await getSmartFileUrl(url.origin, channelPost.document.file_id, telegramBotToken, 'document');
                 fileUrls.push(fileUrl);
@@ -775,7 +779,14 @@ var fixed_default = {
               console.log(`\u5A92\u4F53\u7EC4\u5904\u7406\u5B8C\u6210\uFF0C\u73B0\u5728\u5171\u6709 ${existingGroup.imageUrls?.length || 0} \u5F20\u56FE\u7247\u3001${existingGroup.videoUrls?.length || 0} \u4E2A\u89C6\u9891\u548C ${existingGroup.fileUrls?.length || 0} \u4E2A\u6587\u4EF6`);
             } else {
               console.log(`\u4E3A\u5A92\u4F53\u7EC4\u521B\u5EFA\u65B0\u7684Notion\u9875\u9762`);
-              const content = channelPost.caption || "\u5A92\u4F53\u7EC4\u6D88\u606F";
+              // 调试：打印所有可能的文本字段
+              console.log(`\u8C03\u8BD5 - channelPost.caption: ${channelPost.caption}`);
+              console.log(`\u8C03\u8BD5 - channelPost.text: ${channelPost.text}`);
+              console.log(`\u8C03\u8BD5 - channelPost \u5B8C\u6574\u7ED3\u6784:`, JSON.stringify(channelPost, null, 2));
+
+              // 优先使用消息的文本内容，如果没有才使用默认的"媒体组消息"
+              const content = channelPost.caption || channelPost.text || "\u5A92\u4F53\u7EC4\u6D88\u606F";
+              console.log(`\u5A92\u4F53\u7EC4\u6D88\u606F\u5185\u5BB9: ${content}`);
               const pageId = await addMessageToNotion(
                 notionToken,
                 notionDatabaseId,
@@ -1881,6 +1892,185 @@ var fixed_default = {
               "3. 图片应该出现在'图片'属性中",
               "4. 文件名应该保持原始扩展名（如.jpg）",
               "5. 图片应该能在Notion中正常显示"
+            ]
+          }
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+    // 测试转发消息内容修复
+    if (path === "/test-forwarded-content-fix") {
+      try {
+        return new Response(JSON.stringify({
+          success: true,
+          message: "转发消息内容提取修复说明",
+          problem: {
+            description: "转发消息中的文本内容被文件名覆盖",
+            example: "转发消息包含'这是一张美丽的图片'和图片文件，但Notion中只显示'图片: filename.jpg'",
+            cause: "代码直接使用文件名作为messageContent，忽略了channelPost.caption和channelPost.text"
+          },
+          solution: {
+            priority: "优先级顺序：channelPost.caption > channelPost.text > 文件名",
+            implementation: {
+              before: "messageContent = `图片: ${fileName}`;",
+              after: "messageContent = channelPost.caption || channelPost.text || `图片: ${fileName}`;"
+            },
+            benefits: [
+              "保留转发消息的原始文本内容",
+              "图片和文档都能正确显示消息内容",
+              "只有在没有文本时才显示文件名"
+            ]
+          },
+          testScenarios: [
+            {
+              scenario: "转发带文字的图片",
+              before: "Notion显示：图片: filename.jpg",
+              after: "Notion显示：原始消息文字内容"
+            },
+            {
+              scenario: "转发带文字的文档",
+              before: "Notion显示：filename.pdf",
+              after: "Notion显示：原始消息文字内容"
+            },
+            {
+              scenario: "转发纯图片（无文字）",
+              before: "Notion显示：图片: filename.jpg",
+              after: "Notion显示：图片: filename.jpg（保持不变）"
+            }
+          ],
+          verification: {
+            steps: [
+              "1. 转发一条包含文字和图片的消息到bot频道",
+              "2. 检查Notion中的'内容'属性",
+              "3. 应该显示原始消息的文字内容，而不是文件名",
+              "4. 图片仍然正确出现在'图片'属性中"
+            ]
+          }
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+    // 测试媒体组内容修复
+    if (path === "/test-media-group-content-fix") {
+      try {
+        return new Response(JSON.stringify({
+          success: true,
+          message: "媒体组消息内容提取修复说明",
+          problem: {
+            description: "转发的多媒体消息（包含文本和多个视频）显示'媒体组消息'而不是原始文本",
+            example: "转发消息包含'这是一组精彩的视频'和多个视频文件，但Notion中只显示'媒体组消息'",
+            cause: "媒体组处理逻辑只检查channelPost.caption，忽略了channelPost.text"
+          },
+          solution: {
+            priority: "优先级顺序：channelPost.caption > channelPost.text > '媒体组消息'",
+            implementation: {
+              before: "const content = channelPost.caption || '媒体组消息';",
+              after: "const content = channelPost.caption || channelPost.text || '媒体组消息';"
+            },
+            benefits: [
+              "保留转发媒体组消息的原始文本内容",
+              "多视频、多图片消息都能正确显示消息内容",
+              "只有在没有文本时才显示默认的'媒体组消息'"
+            ]
+          },
+          testScenarios: [
+            {
+              scenario: "转发带文字的多视频消息",
+              before: "Notion显示：媒体组消息",
+              after: "Notion显示：原始消息文字内容"
+            },
+            {
+              scenario: "转发带文字的多图片消息",
+              before: "Notion显示：媒体组消息",
+              after: "Notion显示：原始消息文字内容"
+            },
+            {
+              scenario: "转发纯媒体（无文字）",
+              before: "Notion显示：媒体组消息",
+              after: "Notion显示：媒体组消息（保持不变）"
+            }
+          ],
+          relatedFixes: [
+            "单个转发图片内容修复（已完成）",
+            "单个转发文档内容修复（已完成）",
+            "媒体组内容修复（当前修复）"
+          ],
+          verification: {
+            steps: [
+              "1. 转发一条包含文字和多个视频的消息到bot频道",
+              "2. 检查Notion中的'内容'属性",
+              "3. 应该显示原始消息的文字内容，而不是'媒体组消息'",
+              "4. 视频仍然正确出现在'视频'属性中"
+            ]
+          }
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
+    // 调试媒体组消息结构
+    if (path === "/debug-media-group-message") {
+      try {
+        return new Response(JSON.stringify({
+          success: true,
+          message: "媒体组消息调试说明",
+          instructions: [
+            "这个端点用于调试媒体组消息的结构",
+            "当你转发多视频带文本的消息时，请查看Cloudflare Workers的日志",
+            "日志中会显示：",
+            "1. channelPost.caption 的值",
+            "2. channelPost.text 的值",
+            "3. 最终使用的 content 值",
+            "4. 媒体组消息内容: [实际内容]"
+          ],
+          debugSteps: [
+            "1. 转发一条包含文字和多个视频的消息到bot频道",
+            "2. 在Cloudflare Workers Dashboard中查看实时日志",
+            "3. 查找包含'媒体组消息内容:'的日志行",
+            "4. 检查channelPost对象的完整结构"
+          ],
+          logLocation: "Cloudflare Workers Dashboard > telegram-bot-notion > Logs",
+          expectedLogs: [
+            "检测到媒体组消息，组ID: [group_id]",
+            "为媒体组创建新的Notion页面",
+            "媒体组消息内容: [应该显示原始文本而不是'媒体组消息']"
+          ],
+          troubleshooting: {
+            ifStillShowsDefault: [
+              "检查channelPost.caption是否为null/undefined",
+              "检查channelPost.text是否为null/undefined",
+              "可能文本内容在其他字段中（如forwarded_from等）"
+            ],
+            possibleCauses: [
+              "转发消息的文本可能在不同的字段中",
+              "媒体组的第一条消息可能没有文本",
+              "Telegram API结构可能与预期不同"
             ]
           }
         }), {
