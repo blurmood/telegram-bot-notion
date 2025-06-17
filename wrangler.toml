@@ -1,6 +1,10 @@
 name = "telegram-bot-notion"
-main = "index.js"
+main = "dist/index.js"
 compatibility_date = "2023-12-01"
+
+# TypeScript 构建配置
+[build]
+command = "npm run build"
 
 # KV 存储配置 - 用于缓存文件路径
 [[kv_namespaces]]

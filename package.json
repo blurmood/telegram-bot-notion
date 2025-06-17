@@ -1,0 +1,28 @@
+{
+  "name": "telegrambotnotion",
+  "version": "1.0.0",
+  "description": "一个强大的 Cloudflare Workers 服务，用于将 Telegram 频道消息自动同步到 Notion 数据库，支持**永久有效的文件链接**和**智能文件处理**。",
+  "main": "index.js",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250617.0",
+    "@types/node": "^24.0.3",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blurmood/telegram-bot-notion.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/blurmood/telegram-bot-notion/issues"
+  },
+  "homepage": "https://github.com/blurmood/telegram-bot-notion#readme"
+}
