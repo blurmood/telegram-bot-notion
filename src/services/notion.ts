@@ -2,15 +2,28 @@
  * Notion API 服务
  */
 
-import { 
-  NotionImageBlock, 
-  NotionVideoBlock, 
+import {
+  NotionImageBlock,
+  NotionVideoBlock,
   NotionPage,
   NotionDatabase,
   CreatePageRequest,
   AppendBlockChildrenRequest,
-  MessageType 
+  MessageType
 } from '../types';
+
+/**
+ * 格式化日期时间为 YYYY-MM-DDTHH:MM 格式，确保小时和分钟都是两位数
+ */
+function formatDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
 
 /**
  * 添加多个图片块到Notion页面
@@ -258,7 +271,7 @@ export async function addMessageToNotion(
       // 创建日期 - 日期时间类型
       "创建日期": {
         date: {
-          start: new Date().toISOString().slice(0, 16) // 格式：YYYY-MM-DDTHH:MM
+          start: formatDateTime(new Date()) // 格式：YYYY-MM-DDTHH:MM，确保两位数显示
         }
       }
     };
@@ -385,6 +398,133 @@ export async function addMessageToNotion(
     if ((error as any).body) {
       console.error("错误详情:", JSON.stringify((error as any).body));
     }
+    return false;
+  }
+}
+
+/**
+ * 更新现有Notion页面的媒体内容
+ */
+export async function updatePageMedia(
+  notionToken: string,
+  pageId: string,
+  newImageUrls: string[] = [],
+  newVideoUrls: string[] = [],
+  newFileUrls: string[] = []
+): Promise<boolean> {
+  try {
+    console.log(`更新页面 ${pageId} 的媒体内容`);
+    console.log(`新增图片: ${newImageUrls.length}, 新增视频: ${newVideoUrls.length}, 新增文件: ${newFileUrls.length}`);
+
+    // 添加新的图片块
+    if (newImageUrls.length > 0) {
+      console.log(`添加 ${newImageUrls.length} 张新图片到页面...`);
+      const imageResult = await addMultipleImageBlocksToNotion(notionToken, pageId, newImageUrls);
+      if (imageResult) {
+        console.log(`新图片块添加成功!`);
+      } else {
+        console.error(`新图片块添加失败!`);
+      }
+    }
+
+    // 添加新的视频块
+    if (newVideoUrls.length > 0) {
+      console.log(`添加 ${newVideoUrls.length} 个新视频到页面...`);
+      const videoResult = await addMultipleVideoBlocksToNotion(notionToken, pageId, newVideoUrls);
+      if (videoResult) {
+        console.log(`新视频块添加成功!`);
+      } else {
+        console.error(`新视频块添加失败!`);
+      }
+    }
+
+    // 更新页面属性中的文件列表
+    if (newImageUrls.length > 0 || newVideoUrls.length > 0 || newFileUrls.length > 0) {
+      try {
+        // 获取当前页面属性
+        const pageResponse = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${notionToken}`,
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
+          }
+        });
+
+        if (pageResponse.ok) {
+          const currentPage: any = await pageResponse.json();
+          const currentProperties = currentPage.properties;
+
+          // 构建更新的属性
+          const updateProperties: any = {};
+
+          // 更新图片属性
+          if (newImageUrls.length > 0) {
+            const currentImages = currentProperties["图片"]?.files || [];
+            const newImages = newImageUrls.map((url) => ({
+              type: "external",
+              name: "图片",
+              external: { url }
+            }));
+            updateProperties["图片"] = {
+              files: [...currentImages, ...newImages]
+            };
+          }
+
+          // 更新视频属性
+          if (newVideoUrls.length > 0) {
+            const currentVideos = currentProperties["视频"]?.files || [];
+            const newVideos = newVideoUrls.map((url) => ({
+              type: "external",
+              name: "视频",
+              external: { url }
+            }));
+            updateProperties["视频"] = {
+              files: [...currentVideos, ...newVideos]
+            };
+          }
+
+          // 更新文件属性
+          if (newFileUrls.length > 0) {
+            const currentFiles = currentProperties["文件"]?.files || [];
+            const newFiles = newFileUrls.map((url) => ({
+              type: "external",
+              name: "文件",
+              external: { url }
+            }));
+            updateProperties["文件"] = {
+              files: [...currentFiles, ...newFiles]
+            };
+          }
+
+          // 发送更新请求
+          const updateResponse = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+            method: "PATCH",
+            headers: {
+              "Authorization": `Bearer ${notionToken}`,
+              "Notion-Version": "2022-06-28",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              properties: updateProperties
+            })
+          });
+
+          if (updateResponse.ok) {
+            console.log("页面属性更新成功!");
+          } else {
+            const errorData: any = await updateResponse.json();
+            console.error("页面属性更新失败:", errorData);
+          }
+        }
+      } catch (propertyError) {
+        console.error("更新页面属性时出错:", propertyError);
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error("更新页面媒体内容时出错:", error);
     return false;
   }
 }

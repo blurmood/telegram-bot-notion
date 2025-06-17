@@ -5,38 +5,38 @@
  * 支持永久有效的文件链接和智能文件处理
  */
 
-import { 
-  Environment, 
-  TelegramUpdate, 
+import {
+  Environment,
+  TelegramUpdate,
   TelegramChannelPost,
   MessageType,
-  RequestHandler 
+  RequestHandler
 } from './types';
 
-import { 
-  getFileInfo, 
-  getFileUrl, 
-  getFileUrlSync, 
-  getSmartFileUrl, 
-  getTelegramFileUrl 
+
+
+import {
+  getFileInfo,
+  getFileUrlSync,
+  getSmartFileUrl,
+  getTelegramFileUrl
 } from './utils/file';
 
-import { 
-  getMediaGroupInfo, 
-  saveMediaGroupInfo, 
-  cleanupExpiredMediaGroups 
+import {
+  getMediaGroupInfo,
+  saveMediaGroupInfo,
+  updateMediaGroupInfo
 } from './utils/mediaGroup';
 
-import { 
-  addMessageToNotion, 
-  addMultipleImageBlocksToNotion, 
-  addMultipleVideoBlocksToNotion 
+import {
+  addMessageToNotion,
+  updatePageMedia
 } from './services/notion';
 
 /**
  * 主要的Worker处理函数
  */
-const worker: RequestHandler = async (request: Request, env: Environment, ctx: ExecutionContext): Promise<Response> => {
+const worker: RequestHandler = async (request: Request, env: Environment, _ctx: ExecutionContext): Promise<Response> => {
   const url = new URL(request.url);
   const path = url.pathname;
   console.log(`收到请求: ${request.method} ${path}`);
@@ -63,6 +63,8 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
       const update: TelegramUpdate = await request.json();
       console.log("收到 Telegram 更新:", JSON.stringify(update, null, 2));
 
+
+
       const channelPost: TelegramChannelPost | undefined = update.channel_post;
       if (!channelPost) {
         console.log("不是频道消息，忽略");
@@ -77,6 +79,8 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
 
       console.log(`频道: ${chatTitle}, 消息ID: ${messageId}`);
 
+
+
       let messageContent = "";
       let messageType: MessageType = "文本";
       const imageUrls: string[] = [];
@@ -87,6 +91,7 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
       if (channelPost.text) {
         messageContent = channelPost.text;
         messageType = "文本";
+
         console.log(`文本消息: ${messageContent}`);
       }
 
@@ -112,6 +117,7 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
 
         messageContent = channelPost.caption || "图片消息";
         messageType = "图片";
+
       }
 
       // 处理视频消息
@@ -208,22 +214,110 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
       if (channelPost.media_group_id) {
         const mediaGroupId = channelPost.media_group_id;
         console.log(`检测到媒体组消息，组ID: ${mediaGroupId}`);
+
+
         
         // 处理媒体组逻辑...
         const existingGroup = getMediaGroupInfo(mediaGroupId);
         if (existingGroup) {
           console.log(`更新现有媒体组: ${mediaGroupId}`);
-          // 更新现有媒体组...
+
+          // 更新媒体组信息
+          const updatedGroup = updateMediaGroupInfo(mediaGroupId, imageUrls, videoUrls, fileUrls);
+
+          if (updatedGroup) {
+            // 检查当前消息是否有文本内容，如果有且之前的内容是默认的"媒体组消息"，则更新页面内容
+            const currentContent = channelPost.caption || channelPost.text ||
+                                 channelPost.forward_signature || channelPost.forward_sender_name;
+
+            if (currentContent && updatedGroup.messageContent === "媒体组消息") {
+              console.log(`发现新的文本内容，更新页面标题: ${currentContent}`);
+              try {
+                // 更新页面标题
+                const updatePageResponse = await fetch(`https://api.notion.com/v1/pages/${updatedGroup.pageId}`, {
+                  method: "PATCH",
+                  headers: {
+                    "Authorization": `Bearer ${notionToken}`,
+                    "Notion-Version": "2022-06-28",
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    properties: {
+                      "内容": {
+                        title: [
+                          {
+                            text: {
+                              content: currentContent
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  })
+                });
+
+                if (updatePageResponse.ok) {
+                  console.log(`页面标题更新成功: ${currentContent}`);
+                  // 更新缓存中的内容
+                  updatedGroup.messageContent = currentContent;
+                  saveMediaGroupInfo(mediaGroupId, updatedGroup);
+                } else {
+                  console.error(`页面标题更新失败: ${updatePageResponse.status}`);
+                }
+              } catch (titleUpdateError) {
+                console.error(`更新页面标题时出错:`, titleUpdateError);
+              }
+            }
+
+            // 更新Notion页面，添加新的媒体内容
+            console.log(`向页面 ${updatedGroup.pageId} 添加新媒体内容`);
+            try {
+              const updateResult = await updatePageMedia(
+                notionToken,
+                updatedGroup.pageId,
+                imageUrls,
+                videoUrls,
+                fileUrls
+              );
+
+              if (updateResult) {
+                console.log(`媒体组 ${mediaGroupId} 更新成功！`);
+              } else {
+                console.error(`媒体组 ${mediaGroupId} 更新失败！`);
+              }
+            } catch (updateError) {
+              console.error(`更新媒体组时出错:`, updateError);
+            }
+          }
         } else {
           console.log(`为媒体组创建新的Notion页面`);
-          // 调试：打印所有可能的文本字段
-          console.log(`调试 - channelPost.caption: ${channelPost.caption}`);
-          console.log(`调试 - channelPost.text: ${channelPost.text}`);
-          console.log(`调试 - channelPost 完整结构:`, JSON.stringify(channelPost, null, 2));
+
           
-          // 优先使用消息的文本内容，如果没有才使用默认的"媒体组消息"
-          const content = channelPost.caption || channelPost.text || "媒体组消息";
+          // 尝试从多个字段提取文本内容
+          let content = channelPost.caption || channelPost.text;
+
+          // 如果没有找到文本，检查转发消息的其他字段
+          if (!content) {
+            // 检查转发签名
+            if (channelPost.forward_signature) {
+              content = channelPost.forward_signature;
+              console.log(`从转发签名获取内容: ${content}`);
+            }
+            // 检查转发发送者名称
+            else if (channelPost.forward_sender_name) {
+              content = channelPost.forward_sender_name;
+              console.log(`从转发发送者获取内容: ${content}`);
+            }
+          }
+
+          // 如果仍然没有内容，使用默认值
+          if (!content) {
+            content = "媒体组消息";
+          }
+
           console.log(`媒体组消息内容: ${content}`);
+
+
           
           const pageId = await addMessageToNotion(
             notionToken,
@@ -256,6 +350,7 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
         }
       } else {
         console.log(`处理普通消息，添加到Notion`);
+
         try {
           const result = await addMessageToNotion(
             notionToken,
@@ -281,6 +376,301 @@ const worker: RequestHandler = async (request: Request, env: Environment, ctx: E
       return new Response("处理 Webhook 错误", { status: 500 });
     }
   }
+
+
+
+  // 文件代理路由 - 处理 /file/{file_id} 或 /file/{file_id}/{filename} 请求
+  const fileMatch = path.match(/^\/file\/([^\/]+)(?:\/(.+))?$/);
+  if (fileMatch) {
+    // 处理 CORS 预检请求
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+          "Access-Control-Allow-Headers": "Range, Content-Type",
+          "Access-Control-Max-Age": "86400"
+        }
+      });
+    }
+
+    const fileId = fileMatch[1];
+    const requestedFileName = fileMatch[2] || 'file';
+
+    if (!fileId) {
+      return new Response(JSON.stringify({
+        error: "无效的文件ID"
+      }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        }
+      });
+    }
+
+    console.log(`文件代理请求: fileId=${fileId}, fileName=${requestedFileName}`);
+
+    try {
+      // 从缓存中获取文件路径
+      let filePath: string | null = null;
+
+      try {
+        const cachedPath = await env.FILE_CACHE.get(`file_path:${fileId}`);
+        if (cachedPath) {
+          filePath = cachedPath;
+          console.log(`从缓存获取文件路径: ${filePath}`);
+        }
+      } catch (cacheError) {
+        console.log("缓存读取失败，将从API获取:", (cacheError as Error).message);
+      }
+
+      // 如果缓存中没有，从Telegram API获取
+      if (!filePath) {
+        try {
+          if (telegramBotToken) {
+            filePath = await getFileInfo(telegramBotToken, fileId);
+            console.log(`从API获取文件路径: ${filePath}`);
+          }
+
+          // 缓存文件路径1小时
+          if (filePath) {
+            try {
+              await env.FILE_CACHE.put(`file_path:${fileId}`, filePath, { expirationTtl: 3600 });
+              console.log("文件路径已缓存");
+            } catch (cacheError) {
+              console.log("缓存写入失败:", (cacheError as Error).message);
+            }
+          }
+        } catch (apiError) {
+          console.error("从API获取文件路径失败:", apiError);
+
+          // 检查是否是大文件错误
+          const errorMessage = (apiError as Error).message;
+          if (errorMessage.includes("file is too big") || errorMessage.includes("Request Entity Too Large")) {
+            return new Response(JSON.stringify({
+              error: "文件过大",
+              message: "文件大小超过20MB，无法通过Telegram Bot API访问",
+              fileId: fileId,
+              suggestion: "请尝试直接下载或使用其他方式访问此文件"
+            }), {
+              status: 413,
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+              }
+            });
+          }
+
+          return new Response(JSON.stringify({
+            error: "文件访问失败",
+            message: errorMessage,
+            fileId: fileId
+          }), {
+            status: 404,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*"
+            }
+          });
+        }
+      }
+
+      if (!filePath) {
+        return new Response(JSON.stringify({
+          error: "文件未找到",
+          fileId: fileId
+        }), {
+          status: 404,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
+
+      // 构建Telegram文件URL
+      const telegramFileUrl = getTelegramFileUrl(telegramBotToken, filePath);
+      console.log(`代理请求到: ${telegramFileUrl}`);
+
+      // 转发请求到Telegram
+      const headers = new Headers();
+
+      // 转发Range请求头（用于视频流式传输）
+      const rangeHeader = request.headers.get('range');
+      if (rangeHeader) {
+        headers.set('Range', rangeHeader);
+        console.log(`转发Range请求: ${rangeHeader}`);
+      }
+
+      const response = await fetch(telegramFileUrl, {
+        method: request.method,
+        headers: headers
+      });
+
+      if (!response.ok) {
+        console.error(`Telegram API响应错误: ${response.status} ${response.statusText}`);
+        return new Response(JSON.stringify({
+          error: "文件获取失败",
+          status: response.status,
+          statusText: response.statusText,
+          fileId: fileId
+        }), {
+          status: response.status,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
+
+      // 创建响应头
+      const responseHeaders = new Headers();
+
+      // 复制重要的响应头
+      const importantHeaders = [
+        'content-length',
+        'content-range',
+        'accept-ranges',
+        'last-modified',
+        'etag',
+        'cache-control'
+      ];
+
+      importantHeaders.forEach(headerName => {
+        const value = response.headers.get(headerName);
+        if (value) {
+          responseHeaders.set(headerName, value);
+        }
+      });
+
+      // 智能设置 Content-Type，特别优化视频文件
+      const contentType = response.headers.get('content-type');
+      if (!contentType || contentType === 'application/octet-stream') {
+        // 根据文件路径推断正确的 Content-Type
+        if (filePath.toLowerCase().includes('.mp4')) {
+          responseHeaders.set('Content-Type', 'video/mp4');
+        } else if (filePath.toLowerCase().includes('.mov')) {
+          responseHeaders.set('Content-Type', 'video/quicktime');
+        } else if (filePath.toLowerCase().includes('.avi')) {
+          responseHeaders.set('Content-Type', 'video/x-msvideo');
+        } else if (filePath.toLowerCase().includes('.webm')) {
+          responseHeaders.set('Content-Type', 'video/webm');
+        } else if (filePath.toLowerCase().includes('.mkv')) {
+          responseHeaders.set('Content-Type', 'video/x-matroska');
+        } else if (filePath.toLowerCase().includes('.jpg') || filePath.toLowerCase().includes('.jpeg')) {
+          responseHeaders.set('Content-Type', 'image/jpeg');
+        } else if (filePath.toLowerCase().includes('.png')) {
+          responseHeaders.set('Content-Type', 'image/png');
+        } else if (filePath.toLowerCase().includes('.gif')) {
+          responseHeaders.set('Content-Type', 'image/gif');
+        } else if (filePath.toLowerCase().includes('.pdf')) {
+          responseHeaders.set('Content-Type', 'application/pdf');
+        } else {
+          responseHeaders.set('Content-Type', contentType || 'application/octet-stream');
+        }
+      } else {
+        responseHeaders.set('Content-Type', contentType);
+      }
+
+      // 从文件路径中提取文件名和扩展名
+      const finalContentType = responseHeaders.get('Content-Type');
+      let fileName = 'file';
+      let fileExtension = '';
+
+      if (filePath) {
+        // 从文件路径中提取文件名和扩展名 (例如: "videos/file_137.mp4" -> "file_137.mp4")
+        const pathParts = filePath.split('/');
+        const fullFileName = pathParts[pathParts.length - 1];
+
+        if (fullFileName) {
+          const nameParts = fullFileName.split('.');
+
+          if (nameParts.length > 1) {
+            fileName = nameParts.slice(0, -1).join('.');
+            fileExtension = '.' + nameParts[nameParts.length - 1];
+          } else {
+            fileName = fullFileName;
+          }
+        }
+      }
+
+      // 如果没有扩展名，根据 Content-Type 推断
+      if (!fileExtension && finalContentType) {
+        if (finalContentType.startsWith('video/mp4')) {
+          fileExtension = '.mp4';
+        } else if (finalContentType.startsWith('video/quicktime')) {
+          fileExtension = '.mov';
+        } else if (finalContentType.startsWith('video/webm')) {
+          fileExtension = '.webm';
+        } else if (finalContentType.startsWith('image/jpeg')) {
+          fileExtension = '.jpg';
+        } else if (finalContentType.startsWith('image/png')) {
+          fileExtension = '.png';
+        } else if (finalContentType.startsWith('application/pdf')) {
+          fileExtension = '.pdf';
+        }
+      }
+
+      const fullFileName = fileName + fileExtension;
+
+      // 针对 Notion 优化的 Content-Disposition 设置
+      if (finalContentType && finalContentType.startsWith('video/')) {
+        // 对于视频文件，设置为 inline 以便 Notion 嵌入显示
+        responseHeaders.set('Content-Disposition', `inline; filename="${fullFileName}"`);
+
+        // 添加视频相关的头部，帮助 Notion 识别和流式传输
+        responseHeaders.set('Accept-Ranges', 'bytes');
+      } else if (finalContentType && finalContentType.startsWith('image/')) {
+        // 对于图片文件，也设置为 inline
+        responseHeaders.set('Content-Disposition', `inline; filename="${fullFileName}"`);
+      } else {
+        // 对于其他文件类型，设置为 attachment
+        responseHeaders.set('Content-Disposition', `attachment; filename="${fullFileName}"`);
+      }
+
+      // 添加CORS头
+      responseHeaders.set('Access-Control-Allow-Origin', '*');
+      responseHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      responseHeaders.set('Access-Control-Allow-Headers', 'Range, Content-Type');
+
+      // 添加缓存头
+      responseHeaders.set('Cache-Control', 'public, max-age=3600');
+
+      console.log(`文件代理成功: ${fullFileName}, Content-Type: ${finalContentType}`);
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: responseHeaders
+      });
+
+    } catch (error) {
+      console.error("文件代理错误:", error);
+      return new Response(JSON.stringify({
+        error: "代理服务错误",
+        message: (error as Error).message,
+        fileId: fileId
+      }), {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        }
+      });
+    }
+  }
+
+
+
+
+
+
+
+
+
+
 
   // 其他路由处理...
   return new Response("Not Found", { status: 404 });

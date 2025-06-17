@@ -56,6 +56,36 @@ export function cleanupExpiredMediaGroups(): number {
 }
 
 /**
+ * 更新媒体组信息，添加新的媒体URL
+ */
+export function updateMediaGroupInfo(
+  mediaGroupId: string,
+  newImageUrls: string[] = [],
+  newVideoUrls: string[] = [],
+  newFileUrls: string[] = []
+): MediaGroupInfo | null {
+  const existingInfo = mediaGroupMap.get(mediaGroupId);
+  if (!existingInfo) {
+    console.log(`媒体组 ${mediaGroupId} 不存在，无法更新`);
+    return null;
+  }
+
+  // 更新媒体URL列表
+  const updatedInfo: MediaGroupInfo = {
+    ...existingInfo,
+    imageUrls: [...existingInfo.imageUrls, ...newImageUrls],
+    videoUrls: [...existingInfo.videoUrls, ...newVideoUrls],
+    fileUrls: [...existingInfo.fileUrls, ...newFileUrls],
+    timestamp: Date.now() // 更新时间戳
+  };
+
+  mediaGroupMap.set(mediaGroupId, updatedInfo);
+  console.log(`媒体组 ${mediaGroupId} 更新成功，新增图片: ${newImageUrls.length}, 视频: ${newVideoUrls.length}, 文件: ${newFileUrls.length}`);
+
+  return updatedInfo;
+}
+
+/**
  * 获取媒体组统计信息
  */
 export function getMediaGroupStats(): {
@@ -66,7 +96,7 @@ export function getMediaGroupStats(): {
   const now = Date.now();
   let active = 0;
   let expired = 0;
-  
+
   for (const [, info] of mediaGroupMap.entries()) {
     if (now - info.timestamp > DEFAULT_CONFIG.mediaGroupExpiry) {
       expired++;
@@ -74,7 +104,7 @@ export function getMediaGroupStats(): {
       active++;
     }
   }
-  
+
   return {
     total: mediaGroupMap.size,
     active,
