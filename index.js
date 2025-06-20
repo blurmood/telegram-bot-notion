@@ -993,7 +993,8 @@ var fixed_default = {
       }
     }
     if (path === "/setWebhook") {
-      const webhookUrl = `${url.origin}/webhook`;
+      // 硬编码固定的 Webhook URL
+      const webhookUrl = "https://telegram-bot-notion.liuyiran.workers.dev/webhook";
       try {
         console.log(`\u6B63\u5728\u8BBE\u7F6E Webhook \u5230 ${webhookUrl}`);
         const response = await fetch(

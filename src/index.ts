@@ -377,6 +377,32 @@ const worker: RequestHandler = async (request: Request, env: Environment, _ctx: 
     }
   }
 
+  // 设置Webhook端点
+  if (path === "/setWebhook") {
+    // 硬编码固定的 Webhook URL
+    const webhookUrl = "https://telegram-bot-notion.liuyiran.workers.dev/webhook";
+    try {
+      console.log(`正在设置 Webhook 到 ${webhookUrl}`);
+      const response = await fetch(
+        `https://api.telegram.org/bot${telegramBotToken}/setWebhook?url=${webhookUrl}`
+      );
+      const result = await response.json();
+      console.log("设置 Webhook 结果:", JSON.stringify(result));
+      return new Response(JSON.stringify(result), {
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (error) {
+      console.error("设置 Webhook 错误:", error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: (error as Error).message
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+
 
 
   // 文件代理路由 - 处理 /file/{file_id} 或 /file/{file_id}/{filename} 请求
